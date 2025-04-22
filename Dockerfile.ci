@@ -3,7 +3,7 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE:-zephyrprojectrtos/ci-base:latest}
 
-ARG ZSDK_VERSION=0.17.1-rc1
+ARG ZSDK_VERSION=0.17.0
 ENV ZSDK_VERSION=$ZSDK_VERSION
 ARG KITWARE_NINJA_VERSION=1.11.1.g95dee.kitware.jobserver-1
 ENV KITWARE_NINJA_VERSION=$KITWARE_NINJA_VERSION
@@ -62,62 +62,80 @@ RUN if [ "${HOSTTYPE}" = "x86_64" ]; then \
 	rm doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz \
 	; fi
 
+RUN apt update && apt install -y neovim
 
-# Install renode (x86 only)
-# NOTE: Renode is currently only available for x86_64 host.
-RUN if [ "${HOSTTYPE}" = "x86_64" ]; then \
-	apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF && \
-	echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | tee /etc/apt/sources.list.d/mono-official-stable.list && \
-	apt-get -y update && \
-	wget ${WGET_ARGS} https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode_${RENODE_VERSION}_amd64.deb && \
-	apt-get install -y ./renode_${RENODE_VERSION}_amd64.deb && \
-	rm renode_${RENODE_VERSION}_amd64.deb && \
-	pip3 install -r /opt/renode/tests/requirements.txt --no-cache-dir \
-	; fi
+##################################################################################################################################################
+# # Install renode (x86 only)																													 #
+# # NOTE: Renode is currently only available for x86_64 host.																					 #
+# RUN if [ "${HOSTTYPE}" = "x86_64" ]; then \																									 #
+# 	apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF && \								 #
+# 	echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | tee /etc/apt/sources.list.d/mono-official-stable.list && \		 #
+# 	apt-get -y update && \																														 #
+# 	wget ${WGET_ARGS} https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode_${RENODE_VERSION}_amd64.deb && \				 #
+# 	apt-get install -y ./renode_${RENODE_VERSION}_amd64.deb && \																				 #
+# 	rm renode_${RENODE_VERSION}_amd64.deb && \																									 #
+# 	pip3 install -r /opt/renode/tests/requirements.txt --no-cache-dir \																			 #
+# 	; fi																																		 #
+##################################################################################################################################################
 
-# Install BSIM
-# Note: west needs an extra folder level, so we create a link to the old location to be backwards compatible
-RUN mkdir -p /opt/bsim_west && \
-	cd /opt/ && \
-	west init -m https://github.com/zephyrproject-rtos/babblesim-manifest.git --mr ${BSIM_VERSION} bsim_west && \
-	cd bsim_west/bsim && \
-	west update && \
-	make everything -j 8 && \
-	echo ${BSIM_VERSION} > ./version && \
-	chmod ag+w . -R && \
-	ln -s /opt/bsim_west/bsim /opt/bsim
+########################################################################################################################
+# # Install BSIM																									   #
+# # Note: west needs an extra folder level, so we create a link to the old location to be backwards compatible		   #
+# RUN mkdir -p /opt/bsim_west && \																					   #
+# 	cd /opt/ && \																									   #
+# 	west init -m https://github.com/zephyrproject-rtos/babblesim-manifest.git --mr ${BSIM_VERSION} bsim_west && \	   #
+# 	cd bsim_west/bsim && \																							   #
+# 	west update && \																								   #
+# 	make everything -j 8 && \																						   #
+# 	echo ${BSIM_VERSION} > ./version && \																			   #
+# 	chmod ag+w . -R && \																							   #
+# 	ln -s /opt/bsim_west/bsim /opt/bsim																				   #
+########################################################################################################################
+
 
 # Install cargo environment
-RUN wget -q -O-  "https://sh.rustup.rs" | sh -s -- -y --default-toolchain 1.86
+RUN wget -q -O-  "https://sh.rustup.rs" | sh -s -- -y --default-toolchain nightly
 
 # Install uefi-run utility
 RUN ~/.cargo/bin/cargo install uefi-run --root /usr
 
+# Install rust toolchain
+
+USER user
+
+RUN wget -q -O-  "https://sh.rustup.rs" | sh -s -- -y --default-toolchain nightly
+
+RUN chmod a+x ~/.cargo/env && ~/.cargo/env
+
+ENV PATH="$PATH:/home/user/.cargo/bin"
+
+RUN cargo install espup
+RUN espup install -t esp32
+RUN cargo install ldproxy
+RUN cargo install ripgrep
+
+USER root
+
 # Install target support for Rust.  This is the list as of the current
 # time.
-RUN \
-	~/.cargo/bin/rustup target install riscv32i-unknown-none-elf && \
-	~/.cargo/bin/rustup target install riscv64imac-unknown-none-elf && \
-	~/.cargo/bin/rustup target install thumbv6m-none-eabi && \
-	~/.cargo/bin/rustup target install thumbv7em-none-eabi && \
-	~/.cargo/bin/rustup target install thumbv7m-none-eabi && \
-	~/.cargo/bin/rustup target install thumbv8m.main-none-eabi && \
-	~/.cargo/bin/rustup target install x86_64-unknown-none
-
 # Install LLVM and Clang
-RUN wget ${WGET_ARGS} https://apt.llvm.org/llvm.sh && \
-	chmod +x llvm.sh && \
-	./llvm.sh ${LLVM_VERSION} all && \
-	rm -f llvm.sh
+##############################################################
+# RUN wget ${WGET_ARGS} https://apt.llvm.org/llvm.sh && \	 #
+# 	chmod +x llvm.sh && \									 #
+# 	./llvm.sh ${LLVM_VERSION} all && \						 #
+# 	rm -f llvm.sh											 #
+##############################################################
 
 # Install sparse package for static analysis
-RUN mkdir -p /opt/sparse && \
-	cd /opt/sparse && \
-	git clone https://git.kernel.org/pub/scm/devel/sparse/sparse.git && \
-	cd sparse && git checkout ${SPARSE_VERSION} && \
-	make -j8 && \
-	PREFIX=/opt/sparse make install && \
-	rm -rf /opt/sparse/sparse
+################################################################################
+# RUN mkdir -p /opt/sparse && \												   #
+# 	cd /opt/sparse && \														   #
+# 	git clone https://git.kernel.org/pub/scm/devel/sparse/sparse.git && \	   #
+# 	cd sparse && git checkout ${SPARSE_VERSION} && \						   #
+# 	make -j8 && \															   #
+# 	PREFIX=/opt/sparse make install && \									   #
+# 	rm -rf /opt/sparse/sparse												   #
+################################################################################
 
 # Install protobuf-compiler
 RUN mkdir -p /opt/protoc && \
@@ -139,37 +157,39 @@ RUN mkdir -p /opt/toolchains && \
 # Install FVP
 #
 # Ecosystem FVP License permits redistribution (refer to the relevant license available in the container).
-RUN set -o pipefail && \
-	mkdir -p /opt/fvps && \
-	cd /opt/fvps && \
-	if [ "${HOSTTYPE}" = "x86_64" ]; then SUFFIX=""; else SUFFIX="_armv8l"; fi && \
-	\
-	declare -A FVP_INSTALLABLE=( \
-	["300"]="${FVP_CORSTONE300_VERSION}" \
-	["310"]="${FVP_CORSTONE310_VERSION}" \
-	["315"]="${FVP_CORSTONE315_VERSION}" \
-	["320"]="${FVP_CORSTONE320_VERSION}" \
-	) ; \
-	for corstone in ${!FVP_INSTALLABLE[@]} ; \
-	do version_build="${FVP_INSTALLABLE[$corstone]}" \
-	&& echo "Downloading Corstone-${corstone} ${version_build}" \
-	&& wget ${WGET_ARGS} -O- https://developer.arm.com/-/cdn-downloads/permalink/FVPs-Corstone-IoT/Corstone-${corstone}/FVP_Corstone_SSE-${corstone}_${version_build}_Linux64${SUFFIX}.tgz | tar xz \
-	&& ./FVP_Corstone_SSE-${corstone}.sh --no-interactive --i-agree-to-the-contained-eula -d /opt/fvps/Corstone-${corstone} \
-	&& rm FVP_Corstone_SSE-${corstone}.sh \
-	&& ln -s /opt/fvps/Corstone-${corstone}/models/*/FVP_* /usr/local/bin ; \
-	done && \
-	\
-	declare -A FVP_EXTRACTABLE=( \
-	["RevC-2xAEMvA"]="${FVP_BASE_REVC_VERSION}" \
-	["AEMv8R"]="${FVP_BASE_AEMV8R_VERSION}" \
-	) && \
-	for base in ${!FVP_EXTRACTABLE[@]} ; \
-	do version_build="${FVP_EXTRACTABLE[$base]}" \
-	&& echo "Downloading Base-${base} ${FVP_EXTRACTABLE[$base]}" \
-	&& IFS="_" read version build <<< "${version_build}" \
-	&& wget ${WGET_ARGS} -O- https://developer.arm.com/-/cdn-downloads/permalink/FVPs-Architecture/FM-${version}/FVP_Base_${base}_${version_build}_Linux64${SUFFIX}.tgz | tar xz \
-	; done && \
-	ln -s /opt/fvps/*_pkg/models/*/FVP_* /usr/local/bin
+############################################################################################################################################################################################################
+# RUN set -o pipefail && \																																												   #
+# 	mkdir -p /opt/fvps && \																																												   #
+# 	cd /opt/fvps && \																																													   #
+# 	if [ "${HOSTTYPE}" = "x86_64" ]; then SUFFIX=""; else SUFFIX="_armv8l"; fi && \																														   #
+# 	\																																																	   #
+# 	declare -A FVP_INSTALLABLE=( \																																										   #
+# 	["300"]="${FVP_CORSTONE300_VERSION}" \																																								   #
+# 	["310"]="${FVP_CORSTONE310_VERSION}" \																																								   #
+# 	["315"]="${FVP_CORSTONE315_VERSION}" \																																								   #
+# 	["320"]="${FVP_CORSTONE320_VERSION}" \																																								   #
+# 	) ; \																																																   #
+# 	for corstone in ${!FVP_INSTALLABLE[@]} ; \																																							   #
+# 	do version_build="${FVP_INSTALLABLE[$corstone]}" \																																					   #
+# 	&& echo "Downloading Corstone-${corstone} ${version_build}" \																																		   #
+# 	&& wget ${WGET_ARGS} -O- https://developer.arm.com/-/cdn-downloads/permalink/FVPs-Corstone-IoT/Corstone-${corstone}/FVP_Corstone_SSE-${corstone}_${version_build}_Linux64${SUFFIX}.tgz | tar xz \	   #
+# 	&& ./FVP_Corstone_SSE-${corstone}.sh --no-interactive --i-agree-to-the-contained-eula -d /opt/fvps/Corstone-${corstone} \																			   #
+# 	&& rm FVP_Corstone_SSE-${corstone}.sh \																																								   #
+# 	&& ln -s /opt/fvps/Corstone-${corstone}/models/*/FVP_* /usr/local/bin ; \																															   #
+# 	done && \																																															   #
+# 	\																																																	   #
+# 	declare -A FVP_EXTRACTABLE=( \																																										   #
+# 	["RevC-2xAEMvA"]="${FVP_BASE_REVC_VERSION}" \																																						   #
+# 	["AEMv8R"]="${FVP_BASE_AEMV8R_VERSION}" \																																							   #
+# 	) && \																																																   #
+# 	for base in ${!FVP_EXTRACTABLE[@]} ; \																																								   #
+# 	do version_build="${FVP_EXTRACTABLE[$base]}" \																																						   #
+# 	&& echo "Downloading Base-${base} ${FVP_EXTRACTABLE[$base]}" \																																		   #
+# 	&& IFS="_" read version build <<< "${version_build}" \																																				   #
+# 	&& wget ${WGET_ARGS} -O- https://developer.arm.com/-/cdn-downloads/permalink/FVPs-Architecture/FM-${version}/FVP_Base_${base}_${version_build}_Linux64${SUFFIX}.tgz | tar xz \						   #
+# 	; done && \																																															   #
+# 	ln -s /opt/fvps/*_pkg/models/*/FVP_* /usr/local/bin																																					   #
+############################################################################################################################################################################################################
 
 # Clean up stale packages
 RUN apt-get clean -y && \
@@ -193,3 +213,20 @@ ENV ZEPHYR_TOOLCHAIN_VARIANT=zephyr
 ENV PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig
 ENV OVMF_FD_PATH=/usr/share/ovmf/OVMF.fd
 ENV ARMFVP_BIN_PATH=/usr/local/bin
+
+USER user
+
+RUN cargo install cargo-binstall
+RUN cargo binstall dioxus-cli
+RUN sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev
+
+RUN cargo install esp-generate
+RUN cargo binstall probe-rs-tools
